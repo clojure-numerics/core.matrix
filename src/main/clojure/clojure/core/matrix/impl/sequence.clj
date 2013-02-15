@@ -3,7 +3,11 @@
   (:use clojure.core.matrix.utils)
   (:require [clojure.core.matrix.implementations :as imp])
   (:require [clojure.core.matrix.impl.mathsops :as mops])
+  (:require [clojure.core.matrix.impl.wrappers :as wrap])
   (:require [clojure.core.matrix.multimethods :as mm]))
+
+(set! *warn-on-reflection* true)
+(set! *unchecked-math* true)
 
 (extend-protocol mp/PImplementation
   clojure.lang.ISeq
@@ -15,15 +19,15 @@
         (seq (repeat (first dims) (mp/new-matrix-nd m (next dims))))
         0.0))
     (construct-matrix [m data]
-      (cond
-        (mp/is-scalar? data)
-          data
-        (>= (mp/dimensionality data) 1)
-          (map #(mp/construct-matrix m %) (for [i (range (mp/dimension-count data 0))] (mp/get-major-slice data i)))
-        (sequential? data)
-          (map #(mp/construct-matrix m %) data)
-        :default
-          (error "Don't know how to construct matrix from: " (class data))))
+      (let [dims (mp/dimensionality data)]
+        (cond
+	        (== dims 0) (if (mp/is-scalar? data) data (mp/get-0d data))
+	        (>= dims 1)
+	          (map #(mp/construct-matrix m %) (for [i (range (mp/dimension-count data 0))] (mp/get-major-slice data i)))
+	        (sequential? data)
+	          (map #(mp/construct-matrix m %) data)
+	        :default
+	          (error "Don't know how to construct matrix from: " (class data)))))
     (supports-dimensionality? [m dims]
       true))
 
@@ -43,7 +47,11 @@
 
 (extend-protocol mp/PSliceView
   clojure.lang.ISeq
-    (get-major-slice-view [m i] (nth m i)))
+    (get-major-slice-view [m i] 
+      (let [v (nth m i)]
+        (cond 
+          (mp/is-scalar? v) (wrap/wrap-scalar v))
+          :else v)))
 
 (extend-protocol mp/PSliceSeq
   clojure.lang.ISeq

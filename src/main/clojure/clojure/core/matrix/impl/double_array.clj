@@ -43,6 +43,12 @@
     (supports-dimensionality? [m dims]
       (<= dims 1)))
 
+;; explicitly specify we use a primitive type
+(extend-protocol mp/PTypeInfo
+  (Class/forName "[D")
+    (element-type [m]
+      Double/TYPE))
+
 (extend-protocol mp/PDoubleArrayOutput
   (Class/forName "[D")
     (to-double-array [m] (copy-double-array m))
@@ -71,11 +77,6 @@
         (aset ^doubles m (int (first indexes)) (double v))
         (error "Can't set on double array with dimensionality: " (count indexes))))
     (is-mutable? [m] true))
-
-
-(extend-protocol mp/PSliceSeq
-  (Class/forName "[D")
-    (get-major-slice-seq [m] (seq m)))
 
 (extend-protocol mp/PMatrixScaling
   (Class/forName "[D")
@@ -130,7 +131,7 @@
     (dimensionality [m] 1)
     (is-vector? [m] true)
     (is-scalar? [m] false)
-    (get-shape [m] (cons (count m) nil))
+    (get-shape [m] (list (count m)))
     (dimension-count [m x]
       (if (== (long x) 0)
         (count m)

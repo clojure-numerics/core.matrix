@@ -1,6 +1,7 @@
 (ns clojure.core.matrix.compliance-tester
   (:use clojure.core.matrix)
   (:use clojure.test)
+  (:require [clojure.core.matrix.protocols :as mp])
   (:require [clojure.core.matrix.implementations :as imp])
   (:use clojure.core.matrix.utils))
 
@@ -14,6 +15,9 @@
 ;; - they can't assume anything other than documented API behaviour!
 ;; 
 ;; e.g. we can't assume that scalar values are always Doubles etc.
+;;
+;; Convention: im refers to the original matrix implementation object
+;;             m refers to a specific matrix instance to be tested
 
 ;; ===========================================
 ;; Utility functions
@@ -79,31 +83,65 @@
 (defn test-dimensionality-assumptions [m]
   (testing "shape"
     (is (>= (count (shape m)) 0))
-    (is (= (seq (shape m)) (for [i (range (dimensionality m))] (dimension-count m i)))))
+    (is (= (seq (shape m)) 
+           (seq (for [i (range (dimensionality m))] (dimension-count m i))))))
+  (testing "vectors always have dimensionality == 1"
+    (is (or (= (boolean (vec? m)) (boolean (== 1 (dimensionality m)))) (error "Failed with : " m))))
+  (testing "scalars always have dimensionality == 0"
+    (is (or (not (scalar? m)) (== 0 (dimensionality m)))))
+  (testing "zero-dimensionality"
+    (is (= (zero-dimensional? m) (== 0 (dimensionality m)))))
   (testing "element count"
-    (is (== (ecount m) (reduce * 1 (shape m))))))
+    (is (== (ecount m) (reduce * 1 (shape m))))
+    (is (or (not (scalar? m)) (== 1 (ecount m))))))
 
 (defn test-reshape [m]
   (let [c (ecount m)]
-    (when (supports-dimensionality? m 1) 
-      (= (eseq m) (eseq (reshape m [c]))))
-    (when (supports-dimensionality? m 2)
-      (= (eseq m) (eseq (reshape m [1 c])))
-      (= (eseq m) (eseq (reshape m [c 1]))))))
+    (when (> c 0)
+      (when (supports-dimensionality? m 1) 
+        (= (eseq m) (eseq (reshape m [c]))))
+      (when (supports-dimensionality? m 2)
+        (= (eseq m) (eseq (reshape m [1 c])))
+        (= (eseq m) (eseq (reshape m [c 1])))))))
+
+(defn test-slice-assumptions [m]
+  (let [dims (dimensionality m)]
+    (when (> dims 0)
+      (doseq [sl (slices m)]
+        (is (== (dec dims) (dimensionality sl)))
+        (is (= (next (shape m)) (seq (shape sl))))))))
+
+(defn test-general-transpose [m]
+  (when (> (ecount m) 0) 
+    (let [mt (transpose m)]
+      (is (e= m (transpose mt)))
+      (is (= (seq (shape m)) 
+             (seq (reverse (shape mt))))))))
+
+(defn test-coerce [m]
+  (let [vm (mp/convert-to-nested-vectors m)]
+      (is (clojure.core.matrix.impl.persistent-vector/is-nested-vectors? vm))
+      (is (e= m vm))))
 
 (defn test-vector-round-trip [m]
-  (is (equals m (coerce m (coerce [] m)))))
+  (is (e= m (coerce m (coerce [] m)))))
 
 (defn test-array-assumptions [m]
-  (test-double-array-ops m)
-  (test-reshape m)
+  ;; note: these must work on *any* array, i.e. no pre-assumptions on element type etc.
+  (test-coerce m)
   (test-dimensionality-assumptions m)
-  (test-vector-round-trip m))
+  (test-slice-assumptions m)
+  (test-vector-round-trip m)
+  (test-reshape m)
+  (test-general-transpose m))
 
 (defn test-assumptions-for-all-sizes [im]
   (doseq [vm (create-supported-matrices im)]
     (let [m (matrix im vm)]
-      (test-array-assumptions m))))
+      (test-array-assumptions m)
+      (test-double-array-ops m))))
+
+
 
 ;; ==============================================
 ;; misc tests
@@ -121,7 +159,7 @@
   (testing "All supported sizes")
     (doseq [vm (create-supported-matrices im)]
       (let [m (matrix im vm)]
-        (equals vm m))))
+        (e== vm m))))
 
 (defn test-coerce-via-vectors [m]
   (testing "Vector coercion"
@@ -179,11 +217,11 @@
 (defn test-numeric-functions [im]
   (when (supports-dimensionality? im 2)
     (let [m (matrix im [[1 2] [3 4]])]
-      (is (== 10 (sum m)))
+      (is (== 10 (esum m)))
       (test-scale m)))
   (when (supports-dimensionality? im 1)
     (let [m (matrix im [1 2 3])]
-      (is (== 6 (sum m)))
+      (is (== 6 (esum m)))
       (test-scale m))))
 
 ;; ========================================
@@ -192,7 +230,7 @@
 (defn test-vector-slices [im]
   (let [m (matrix im [1 2 3])]
     (is (equals m (matrix im (vec (slices m)))))
-    (is (= (slices m) (eseq m)))))
+    (is (= (map mp/get-0d (slices m)) (eseq m)))))
 
 (defn test-element-add [im]
   (is (equals [2.0 4.0] (emap + (matrix im [1 3]) (coerce im [1 1]))))
@@ -224,12 +262,12 @@
 
 (defn test-row-column-matrices [im]
   (let [rm (row-matrix im [1 2 3])]
-    (is (= [1 3] (shape rm)))
+    (is (= [1 3] (seq (shape rm))))
     (is (equals [[1 2 3]] rm))
     (is (row-matrix? rm))
     (is (column-matrix? (transpose rm))))
   (let [cm (column-matrix im [1 2 3])]
-    (is (= [3 1] (shape cm)))
+    (is (= [3 1] (seq (shape cm))))
     (is (equals [[1] [2] [3]] cm))
     (is (column-matrix? cm))
     (is (row-matrix? (transpose cm)))))
@@ -244,15 +282,34 @@
 ;; Instance test function
 ;;
 ;; Implementations can call to test specific instances of interest
+;;
+;; All matrix implementations must pass this test for any valid matrix
 (defn instance-test [m]
-  (test-array-assumptions [m]))
+  (test-array-assumptions m))
+
+;; ==============================================
+;; General NDArray test
+;;
+;; These are the most general tests for general purpose mutable NDArray objects
+;;
+;; A general purpose NDArray implementation must pass this test to demonstrate
+;; that is supports all core.matrix functionality correctly
+
+(defn test-ndarray-implementation 
+  "Tests a complete NDArray implementation"
+  [im]
+  (doseq [dim (range 10)] (is (supports-dimensionality? im dim)))
+  (doseq [m (create-supported-matrices im)] (instance-test m))
+  (instance-test (coerce im ['a 'b]))
+  (instance-test (coerce im [[[[[["foo"]]]]]])))
 
 ;; ======================================
 ;; Main compliance test method
 ;; 
-;; implementations should call this with either a valid instance or their registered implementation key
+;; Implementations should call this with either a valid instance or their registered implementation key
 ;;
-;; Convention: im refers to the origincal matrix implementatin object
+;; All valid core.matrix implementation must pass this test
+
 (defn compliance-test 
   "Runs the compliance test suite on a given matrix implementation. 
    m can be either a matrix instance or the implementation keyword."

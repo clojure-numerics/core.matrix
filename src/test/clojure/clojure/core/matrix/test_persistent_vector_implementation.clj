@@ -6,6 +6,10 @@
   (:require clojure.core.matrix.impl.persistent-vector)
   (:refer-clojure :exclude [vector?]))
 
+(deftest test-regressions
+  (testing "vector 3D transpose"
+    (is (= [[[1]]] (transpose [[[1]]])))))
+
 (deftest test-properties
   (is (not (mutable? [1 2])))
   (is (not (mutable? [[1 2] [3 4]]))))
@@ -24,8 +28,9 @@
 
 (deftest test-transpose
   (testing "vector transpose"
-    (= [[1 3] [2 3]] (transpose [[1 2] [3 4]]))
-    (= [[1 2 3]] (transpose [1 2 3]))))
+    (is (= [[1 3] [2 4]] (transpose [[1 2] [3 4]])))
+    (is (= [1 2 3] (transpose [1 2 3])))
+    (is (= [[[[1]]]] (transpose [[[[1]]]])))))
 
 (deftest test-functional-op
   (testing "map"
@@ -58,10 +63,24 @@
 
 (deftest test-sum
   (testing "summing"
-    (is (= 2.0 (sum [[1.0 0.0] [0.0 1.0]])))
-    (is (= 1.5 (sum [1.0 0.5])))))
+    (is (= 2.0 (esum [[1.0 0.0] [0.0 1.0]])))
+    (is (= 1.5 (esum [1.0 0.5])))))
+
+(deftest test-coerce
+  (testing "self-coerce"
+    (is (= [2] (coerce [] [2]))))
+  (testing "double arrays"
+    (is (= [1.0 2.0] (coerce [] (double-array [1 2])))))
+  (testing "nested sequences"
+    (is (= [[1 2] [3 4]] (coerce [] '((1 2) (3 4))))))) 
 
 ;; run complicance tests
+
+(deftest instance-tests
+  (testing "matrices of symbols are supported"
+    (clojure.core.matrix.compliance-tester/instance-test ['a 'b]))
+  (testing "matrices of heterogeneous submatrices"
+    (clojure.core.matrix.compliance-tester/instance-test [[1 2.0] (double-array [3 4])]))) 
 
 (deftest compliance-test
   (clojure.core.matrix.compliance-tester/compliance-test []))

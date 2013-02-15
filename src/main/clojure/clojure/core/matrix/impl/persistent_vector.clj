@@ -1,6 +1,7 @@
 (ns clojure.core.matrix.impl.persistent-vector
   (:require [clojure.core.matrix.protocols :as mp])
   (:use clojure.core.matrix.utils)
+  (:require [clojure.core.matrix.impl.wrappers :as wrap])
   (:require [clojure.core.matrix.implementations :as imp])
   (:require [clojure.core.matrix.impl.mathsops :as mops])
   (:require [clojure.core.matrix.multimethods :as mm]))
@@ -30,29 +31,31 @@
 (defn mapmatrix
   "Maps a function over all components of a persistent vector matrix. Like mapv but for matrices"
   ([f m]
-    (if (vector-1d? m)
+    (if (mp/is-vector? m)
       (mapv f m)
       (mapv (partial mapmatrix f) m)))
   ([f m1 m2]
-    (if (vector-1d? m1)
+    (if (mp/is-vector? m1)
       (mapv f m1 m2)
       (mapv (partial mapmatrix f) m1 m2)))
   ([f m1 m2 & more]
-    (if (vector-1d? m1)
+    (if (mp/is-vector? m1)
       (apply mapv f m1 m2 more)
       (apply mapv (partial mapmatrix f) m1 m2 more))))
 
 (defn persistent-vector-coerce [x]
   "Coerces to nested persistent vectors"
-  (cond
-    (mp/is-scalar? x) x
-    (clojure.core/vector? x) (mapv mp/convert-to-nested-vectors x) 
-    (> (mp/dimensionality x) 0) (mp/convert-to-nested-vectors x) 
-    (instance? java.util.List x) (coerce-nested x)
-    (instance? java.lang.Iterable x) (coerce-nested x)
-    (sequential? x) (coerce-nested x)
-    (.isArray (class x)) (vec (seq x)) 
-    :default (error "Can't coerce to vector: " (class x))))
+  (let [dims (mp/dimensionality x)] 
+    (cond
+	    (mp/is-scalar? x) x
+      (> dims 0) (mp/convert-to-nested-vectors x) 
+	    (clojure.core/vector? x) (mapv mp/convert-to-nested-vectors x) 
+	    (instance? java.util.List x) (coerce-nested x)
+	    (instance? java.lang.Iterable x) (coerce-nested x)
+	    (sequential? x) (coerce-nested x)
+	    (.isArray (class x)) (vec (seq x)) 
+	    (== dims 0) (mp/get-0d x)
+	    :default (error "Can't coerce to vector: " (class x)))))
 
 (defn vector-dimensionality ^long [m]
   "Calculates the dimensionality (== nesting depth) of nested persistent vectors"
@@ -63,6 +66,13 @@
         1)
     (mp/is-scalar? m) 0
     :else (long (mp/dimensionality m))))
+
+(defn is-nested-vectors?
+  "Returns true if m is in a correct nested vector implementation."
+  ([m]
+    (or (mp/is-scalar? m)
+        (and (clojure.core/vector? m) 
+             (every? is-nested-vectors? m))))) 
 
 ;; =======================================================================
 ;; Implementation for nested Clojure persistent vectors used as matrices
@@ -82,7 +92,9 @@
         (mp/is-scalar? data)
           data
         (>= (mp/dimensionality data) 1)
-          (mapv #(mp/construct-matrix m %) (for [i (range (mp/dimension-count data 0))] (mp/get-major-slice data i)))
+          (mapv #(mp/construct-matrix m %) (mp/get-major-slice-seq data))
+        (satisfies? mp/PImplementation data) ;; must be 0-D array....
+          (mp/get-0d data) 
         (sequential? data)
           (mapv #(mp/construct-matrix m %) data)
         :default
@@ -126,10 +138,10 @@
     (get-row [m i]
       (.nth m (long i)))
     (get-column [m i]
-      (let [i (long i)]
-        (mapv #(nth % i) m)))
+      (mp/get-slice m 1 i))
     (get-major-slice [m i]
-      (m i))
+      (let [sl (m i)]
+        sl))
     (get-slice [m dimension i]
       (let [i (long i)
             dimension (long dimension)]
@@ -144,7 +156,8 @@
 
 (extend-protocol mp/PSliceSeq
   clojure.lang.IPersistentVector
-    (get-major-slice-seq [m] (seq m)))
+    (get-major-slice-seq [m] 
+      (seq m)))
 
 (extend-protocol mp/PMatrixAdd
   clojure.lang.IPersistentVector
@@ -164,7 +177,7 @@
 
 (extend-protocol mp/PSummable
   clojure.lang.IPersistentVector
-    (sum [a]
+    (element-sum [a]
       (mp/element-reduce a +)))
 
 (extend-protocol mp/PCoercion
@@ -233,7 +246,7 @@
     (dimensionality [m]
       (vector-dimensionality m))
     (is-vector? [m]
-      (== 1 (vector-dimensionality m)))
+      (vector-1d? m))
     (is-scalar? [m]
       false)
     (get-shape [m]
