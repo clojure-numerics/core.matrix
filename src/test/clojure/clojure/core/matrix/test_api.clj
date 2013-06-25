@@ -17,7 +17,14 @@
 
 (deftest test-shape
   (is (= 0 (count (shape 1))))
-  (is (= [2] (seq (int-array [2]))))) 
+  (is (= [2] (seq (int-array [2]))))
+  (is (same-shape? [1 2] [3 4]))
+  (is (same-shape? 0 1))
+  (is (not (same-shape? [1 2] [2 3 4])))
+  (is (not (same-shape? [1 2] [[0 1] [2 3]])))) 
+
+(deftest test-as-vector
+  (is (e== [1] (as-vector 1)))) 
 
 (deftest test-implementations
   (testing "vector implementation"
@@ -37,10 +44,23 @@
   (is (equals [3 6] (outer-product [1 2] 3)))
   (is (equals [[1 2] [3 6]] (outer-product [1 3] [1 2]))))
 
+(deftest test-add-products
+  (is (equals 7 (add-product 1 2 3)))
+  (is (equals [7] (add-product [1] 2 3)))
+  (is (equals [3 8] (add-product [0 0] [1 2] [3 4])))) 
+
 (deftest test-new
   (is (equals [0 0 0] (new-vector 3)))
   (is (= [0.0 0.0 0.0] (seq (new-vector :double-array 3))))
   (is (e= [0.0 0.0 0.0] (new-vector :double-array 3)))) 
+
+(deftest test-compute-matrix
+  (is (= [["00" "01"] ["10" "11"]]
+         (compute-matrix :persistent-vector [2 2] str))))
+
+;; TODO: need to fix and have proper errors!
+(deftest test-shape-errors
+  (is (error? (add [1] [2 3])))) 
 
 (deftest test-coerce
   (testing "clojure vector coercion"
@@ -79,7 +99,8 @@
 
 (deftest test-broadcast
   (is (= [[1 1] [1 1]] (coerce [] (broadcast 1 [2 2]))))
-  (is (equals [[[[2]]]] (broadcast 2 [1 1 1 1]))))
+  (is (equals [[[[2]]]] (broadcast 2 [1 1 1 1])))
+  (is (= [2 2] (add [1 1] 1))))
 
 (deftest test-mutable-matrix
   (is (error? (scale! [1 2] 2)))
@@ -123,8 +144,10 @@
     (is (equals [[1 0.0] [0 1.0]] [[1.0 0] [0.0 1]])))
   (testing "element e="
     (is (e= [1 2] [1 2]))
+    (is (e= [1 2] [1 2] [1 2] [1 2]))
     (is (not (e= [1 2] [3 4])))
-    (is (not (e= [1 2] [1.0 2.0]))))
+    (is (not (e= [1 2] [1.0 2.0])))
+    (is (not (e= [1 2] [1 2] [1 3] [1 2]))))
   (testing "=="
     (is (op/== 2 2))
     (is (not (op/== 2 4)))
@@ -191,7 +214,11 @@
     )) 
 
 (deftest test-join
+  (is (= [1 2 3] (join [1 2] 3)))
   (is (= [[1 1] [2 2] [3 3]] (join [[1 1]] [[2 2] [3 3]])))) 
+
+(deftest test-main-diagonal
+  (is (e== [1 2] (main-diagonal [[1 0] [4 2] [5 7]]))))
 
 (deftest test-normalise
   (testing "vector normalise"
@@ -259,7 +286,15 @@
     (is (= [1 2 3 4] (broadcast-shape [1 2 3 1] [2 1 4])))
     (is (nil? (broadcast-shape [1 2 3 4] [2 3])))
     (is (= [] (broadcast-shape [] [])))
-    (is (e= [[[nil]]] (broadcast nil [1 1 1]))))) 
+    (is (e= [[[nil]]] (broadcast nil [1 1 1]))))
+  (testing "broadcasted ops"
+    (is (e== [2 3] (add [1 2] 1.0)))
+    (is (e== [2 3] (add 1.0 [1 2])))
+    (is (e== [0 1] (sub [1 2] 1.0)))
+    (is (e== [0 -1] (sub 1.0 [1 2]))))) 
+
+(deftest test-object-array
+  (is (e= [:a :b] (coerce [] (object-array [:a :b]))))) 
 
 (deftest check-examples
   (binding [*out* (java.io.StringWriter.)]

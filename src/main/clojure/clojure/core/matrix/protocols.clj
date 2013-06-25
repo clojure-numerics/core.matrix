@@ -1,5 +1,5 @@
 (ns clojure.core.matrix.protocols
-  (:require [clojure.core.matrix.utils :refer [error same-shape? broadcast-shape]])
+  (:require [clojure.core.matrix.utils :refer [error same-shape-object? broadcast-shape]])
   (:require [clojure.core.matrix.impl.mathsops :as mops]))
 
 (set! *warn-on-reflection* true)
@@ -177,9 +177,8 @@
    If the new shape requires more elements than the original shape, should throw an exception."
   (reshape [m shape]))
 
-
 (defprotocol PMatrixSlices
-  "Protocol to support getting slices of an array.  If implemented, must return either a view
+  "Protocol to support getting slices of an array.  If implemented, must return either a view, a scalar
    or an immutable sub-matrix: it must *not* return copied data. i.e. making a full copy must be avoided."
   (get-row [m i])
   (get-column [m i])
@@ -187,14 +186,17 @@
   (get-slice [m dimension i]))
 
 (defprotocol PSubVector
-  "Protocol for getting a sub-vector view of a vectot. Must return a mutable view
+  "Protocol for getting a sub-vector view of a vector. Must return a mutable view
    if the original vector is mutable. Should throw an exception if the specified 
    subvector is out of bounds for the target vector."
   (subvector [m start length])) 
 
 (defprotocol PSliceView
   "Protocol for quick view access into a row-major slices of an array. If implemented, must return 
-   either a view or an immutable sub-matrix: it must *not* return copied data. 
+   either a view or an immutable sub-matrix: it must *not* return copied data.
+
+   If the matrix is mutable, it must return a mutable view. 
+   
    The default implementation creates a wrapper view."
   (get-major-slice-view [m i] "Gets a view of a major array slice"))
 
@@ -202,6 +204,10 @@
   "Returns the row-major slices of the matrix as a sequence. These must be views or immutable sub-arrays.
    The default implementation uses get-major-slice-view to obtain the slices."
   (get-major-slice-seq [m] "Gets a sequence of all major array slices"))
+
+(defprotocol PSliceJoin
+  "Protocol for concatenating / joining arrays."
+  (join [m a] "Concatenates a to m, along the major slice dimension")) 
 
 ;; TODO: should return either an immutable sub-matrix or a mutable view
 (defprotocol PMatrixSubComponents
@@ -251,6 +257,30 @@
   (inner-product [m a])
   (outer-product [m a]))
 
+(defprotocol PAddProduct
+  "Protocol for add-product operation."
+  (add-product [m a b])) 
+
+(defprotocol PAddProductMutable
+  "Protocol for mutable add-product! operation."
+  (add-product! [m a b])) 
+
+(defprotocol PAddScaledProduct
+  "Protocol for add-product operation."
+  (add-scaled-product [m a b factor])) 
+
+(defprotocol PAddScaledProductMutable
+  "Protocol for mutable add-product! operation."
+  (add-scaled-product! [m a b factor])) 
+
+(defprotocol PAddScaled
+  "Protocol for add-product operation."
+  (add-scaled [m a factor])) 
+
+(defprotocol PAddScaledMutable
+  "Protocol for mutable add-product! operation."
+  (add-scaled! [m a factor])) 
+
 (defprotocol PMatrixDivide
   "Protocol to support element-wise division operator. 
    One-arg version returns the reciprocal of all elements."
@@ -287,12 +317,12 @@
   (pre-scale! [m a]))
 
 (defprotocol PMatrixAdd
-  "Protocol to support matrix addition on an arbitrary matrices of same size"
+  "Protocol to support matrix addition and subtraction on arbitrary matrices"
   (matrix-add [m a])
   (matrix-sub [m a]))
 
 (defprotocol PMatrixAddMutable
-  "Protocol to support matrix addition on an arbitrary matrices of same size"
+  "Protocol to support matrix addition on any matrices of same size"
   (matrix-add! [m a])
   (matrix-sub! [m a]))
 
@@ -300,6 +330,11 @@
   "Protocol to get a submatrix of another matrix. dim-ranges should be a sequence of [start len] 
    pairs, one for each dimension. If a pair is nil, it should be interpreted to take the whole dimension."
   (submatrix [d dim-ranges])) 
+
+(defprotocol PComputeMatrix
+  "Protocol to compute a matrix by calling a function on each indexed location. The function f will be called
+   as (f x y z ...) for all index values."
+  (compute-matrix [m shape f])) 
 
 (defprotocol PTranspose
   "Protocol for matrix transpose operation"
@@ -330,6 +365,16 @@
 (defprotocol PVectorDistance
   (distance [a b]
      "Euclidean distance of two vectors."))
+
+(defprotocol PVectorView
+  (as-vector [m]
+    "Returns a view of an array as a single flattened vector. May return the vector itself
+     if it is already a 1D vector.")) 
+
+(defprotocol PVectorisable
+  (to-vector [m]
+    "Returns an array as a single flattened vector")) 
+
 
 (defprotocol PMutableVectorOps
   "Protocol for mutable versions of commn vector operations" 
@@ -371,7 +416,11 @@
 (eval
   `(defprotocol PMathsFunctions
   "Protocol to support mathematic functions applied element-wise to a matrix"
-  ~@(map (fn [[name func]] `(~name [~'m])) mops/maths-ops)
+  ~@(map (fn [[name func]] `(~name [~'m])) mops/maths-ops)))
+
+(eval
+  `(defprotocol PMathsFunctionsMutable
+  "Protocol to support mutable mathematic functions applied element-wise to a matrix"
   ~@(map (fn [[name func]] `(~(symbol (str name "!")) [~'m])) mops/maths-ops)))
 
 (defprotocol PElementCount
@@ -422,10 +471,9 @@
   "Broadcasts two matrices into indentical shapes. 
    Returns a vector containing the two broadcasted matrices.
    Throws an error if not possible."
-  ([a] [a])
   ([a b]
     (let [sa (get-shape a) sb (get-shape b)]
-      (if (clojure.core.matrix.utils/same-shape? sa sb)
+      (if (clojure.core.matrix.utils/same-shape-object? sa sb)
         [a b]  
         (if-let [bs (broadcast-shape sa sb)]
           (let [b (broadcast b bs)
