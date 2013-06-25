@@ -34,7 +34,7 @@
 ;; matrix construction functions
 
 (declare current-implementation)
-(declare current-implementation-check)
+(declare implementation-check)
 (declare current-implementation-object)
 (def ^:dynamic *matrix-implementation* :persistent-vector)
 
@@ -42,84 +42,89 @@
   "Constructs a matrix from the given data.
 
    The data may be in one of the following forms:
-   - Nested sequences of scalar values, e.g. Clojure vectors
    - A valid existing matrix
+   - Nested sequences of scalar values, e.g. Clojure vectors
+   - A sequence of slices, each of which must be valid matrix data
 
    If implementation is not specified, uses the current matrix library as specified
    in *matrix-implementation*"
   ([data]
-    (if-let [m (current-implementation-object)]
-      (mp/construct-matrix m data)
-      (error "No clojure.core.matrix implementation available")))
+    (mp/construct-matrix (implementation-check) data))
   ([implementation data]
-    (mp/construct-matrix (imp/get-canonical-object implementation) data)))
+    (mp/construct-matrix (implementation-check implementation) data)))
 
 (defn array
   "Constructs a new n-dimensional array from the given data.
 
    The data may be in one of the following forms:
+   - A valid existing matrix
    - Nested sequences of scalar values, e.g. Clojure vectors
-   - A valid existing array
+   - A sequence of slices, each of which must be valid matrix data
 
    If implementation is not specified, uses the current matrix library as specified
    in *matrix-implementation*"
   ([data]
-    (if-let [m (current-implementation-object)]
-      (mp/construct-matrix m data)
-      (error "No clojure.core.matrix implementation available")))
+    (mp/construct-matrix (implementation-check) data))
   ([implementation data]
-    (mp/construct-matrix (imp/get-canonical-object implementation) data)))
+    (mp/construct-matrix (implementation-check implementation) data)))
 
 (defn new-vector
   "Constructs a new zero-filled vector with the given length.
-   If the implementation supports mutable vectors, then the new vector should be fully mutable."
+   New matrix will contain default values as defined by the implementation (usually null or zero).
+   If the implementation supports mutable vectors, then the new vector will be fully mutable."
   ([length]
-    (mp/new-vector (current-implementation-object) length))
+    (mp/new-vector (implementation-check) length))
   ([implementation length]
-    (mp/new-vector (or (imp/get-canonical-object implementation) (error "No clojure.core.matrix implementation available")) 
-                   length)))
+    (mp/new-vector (implementation-check implementation) length)))
 
 (defn new-matrix
   "Constructs a new zero-filled matrix with the given dimensions. 
-   If the implementation supports mutable matrices, then the new matrix should be fully mutable."
+   New matrix will contain default values as defined by the implementation (usually null or zero).
+   If the implementation supports mutable matrices, then the new matrix will be fully mutable."
   ([rows columns]
-    (if-let [ik (current-implementation)]
-      (mp/new-matrix (imp/get-canonical-object ik) rows columns)
-      (error "No clojure.core.matrix implementation available"))))
+    (mp/new-matrix (implementation-check) rows columns))
+  ([implementation rows columns]
+    (mp/new-matrix (implementation-check implementation) rows columns)))
 
 (defn new-array
-  "Creates a new array with the given dimensions. "
-  ([length] (new-vector length))
-  ([rows columns] (new-matrix rows columns))
-  ([dim-1 dim-2 & more-dim]
-    (let [ik (current-implementation-check)]
-      (mp/new-matrix-nd (imp/get-canonical-object ik) (cons dim-1 (cons dim-2 more-dim))))))
+  "Creates a new array with the given shape. 
+   New matrix will contain default values as defined by the implementation (usually null or zero).
+   If the implementation supports mutable matrices, then the new matrix will be fully mutable."
+  ([shape]
+    (mp/new-matrix-nd (implementation-check) shape))
+  ([implementation shape]
+    (mp/new-matrix-nd (implementation-check implementation) shape)))
 
 (defn row-matrix
-  "Constucts a row matrix with the given values. The returned matrix is a 2D 1xN row matrix."
+  "Constucts a row matrix with the given data. The returned matrix is a 2D 1xN row matrix.
+
+   The data must be either a valid existing vector or a sequence of scalar values."
   ([data]
-   (let [ik (current-implementation-check)]
-      (mp/construct-matrix (imp/get-canonical-object ik) (vector data))))
+    (mp/construct-matrix (implementation-check) (vector data)))
   ([implementation data]
-    (mp/construct-matrix (imp/get-canonical-object implementation) (vector data))))
+    (mp/construct-matrix (implementation-check implementation) (vector data))))
 
 (defn column-matrix
-  "Constucts a column matrix with the given values. The returned matrix is a 2D Nx1 column matrix."
+  "Constucts a column matrix with the given data. The returned matrix is a 2D Nx1 column matrix.
+
+   The data must be either a valid existing vector or a sequence of scalar values."
   ([data]
-   (let [ik (current-implementation-check)]
-      (mp/construct-matrix (imp/get-canonical-object ik) (map vector data))))
+    (mp/construct-matrix (implementation-check) (map vector data)))
   ([implementation data]
-    (mp/construct-matrix (imp/get-canonical-object implementation) (map vector data))))
+    (mp/construct-matrix (implementation-check implementation) (map vector data))))
 
 (defn identity-matrix
   "Constructs a 2D identity matrix with the given number of rows"
   ([dims]
-    (mp/identity-matrix (current-implementation-object) dims))
+    (mp/identity-matrix (implementation-check) dims))
   ([implementation dims]
-    (mp/identity-matrix (imp/get-canonical-object implementation) dims)))
+    (mp/identity-matrix (implementation-check implementation) dims)))
 
 (defn mutable-matrix
-  "Constructs a mutable copy of the given matrix."
+  "Constructs a mutable copy of the given matrix. 
+
+   If the implementation does not support mutable matrices, will return a mutable array
+   from another core.matrix implementation that supports the same element type."
   ([data]
     (or (mp/mutable-matrix data) 
         (clojure.core.matrix.impl.ndarray/ndarray data)))) 
@@ -136,18 +141,18 @@
   "Creates a matrix with the specified shape, and each element specified by (f i j k...)
    Where i, j, k... are the index positions of each element in the matrix"
   ([shape f]
-    (compute-matrix (current-implementation-object) shape f))
+    (compute-matrix (implementation-check) shape f))
   ([implementation shape f]
-    ;; TODO: switch to a protocol implementation
-    (let [m (imp/get-canonical-object implementation)]
-      (TODO)))) 
+    (let [m (implementation-check implementation)]
+      (mp/compute-matrix m shape f)))) 
 
 (defn sparse-matrix
-  "Creates a sparse matrix with the given data. Sparse matrices are require to store
-  a M*N matrix with E non-zero elements in at most O(M+N+E) space. If the immplementation
-  cannot create a sparse matrix satisfying this condition, nil may be returned"
+  "Creates a sparse matrix with the given data. Sparse matrices are required to store
+  a M*N matrix with E non-zero elements in approx O(M+N+E) space or less.
+
+  Throws an exception if creation of a sparse matrix is not possible"
   ([data]
-    (compute-matrix (current-implementation-object) data))
+    (sparse-matrix (current-implementation-object) data))
   ([implementation data]
     (TODO))) 
 
@@ -165,10 +170,16 @@
 
 (defn supports-dimensionality?
   "Returns true if the implementation for a given matrix supports a specific dimensionality, i.e.
-   can create and manipulate matrices with the given number of dimensions"
+   can natively create and manipulate matrices with the given number of dimensions"
   ([m dimension-count]
     (let [m (if (keyword? m) (imp/get-canonical-object m) m)]
       (mp/supports-dimensionality? m dimension-count))))
+
+(defn supports-shape?
+  "Returns true if the implementation supports creation of matrices with a specific shape."
+  [m shape]
+  (let [m (if (keyword? m) (imp/get-canonical-object m) m)]
+    (mp/supports-dimensionality? m (count shape)))) 
 
 ;; ======================================
 ;; matrix assignment and copying
@@ -186,6 +197,12 @@
   ([m a]
     (mp/assign-array! m a)
     m))
+
+(defn assign
+  "Assigns a value to a matrix, broadcasting to fill the whole matrix as necessary.
+   Returns a new matrix."
+  ([m a]
+    (mp/broadcast (mp/coerce-param m a) (mp/get-shape m)))) 
 
 (defn clone
   "Constructs a clone of the matrix, using the same implementation. This function is intended to
@@ -209,7 +226,7 @@
 ;; Matrix predicates and querying
 
 (defn array?
-  "Returns true if the parameter is an N-dimensional array, for any N>=1"
+  "Returns true if the parameter is an N-dimensional array, for any N>=0"
   ([m]
     (not (mp/is-scalar? m))))
 
@@ -300,6 +317,19 @@
   ([a] true)
   ([a b] (not (nil? (broadcast-shape (mp/get-shape a) (mp/get-shape b)))))) 
 
+(defn same-shape?
+  "Returns true if the arrays have the identical shape, false otherwise"
+  ([] true)
+  ([m] true)
+  ([m n]
+    (or
+      (identical? m n)
+      (clojure.core.matrix.utils/same-shape-object? (mp/get-shape m) (mp/get-shape n))))
+  ([m n & more]
+    (and 
+      (same-shape? m n)
+      (every? #(same-shape? m %) more)))) 
+
 ;; =======================================
 ;; Conversions
 
@@ -372,7 +402,7 @@
     (mp/get-column m y)))
 
 (defn coerce
-  "Coerces param to a format usable by a specific matrix implementation.
+  "Coerces param into a format preferred by a specific matrix implementation.
    If param is already in a format deemed usable by the implementation, returns it unchanged."
   ([m param]
     (let [m (if (keyword? m) (imp/get-canonical-object m) m)]
@@ -418,6 +448,16 @@
   ([m dimension]
     (map #(mp/get-slice m dimension %) (range (mp/dimension-count m dimension)))))
 
+(defn rows 
+  "Gets the rows of a matrix, as a sequence"
+  ([m]
+    (slices m))) 
+
+(defn columns 
+  "Gets the columns of a matrix, as a sequence"
+  ([m]
+    (slices m 1))) 
+
 (defn main-diagonal
   "Returns the main diagonal of a matrix or general array, as a vector"
   ([m]
@@ -426,20 +466,36 @@
 (defn join 
   "Joins arrays together, along dimension 0. Other dimensions must be compatible"
   ([& arrays]
-    (let [a (first arrays)]
-      (coerce a (mapcat slices arrays))))) 
+    (reduce mp/join arrays))) 
 
 (defn join-along 
   "Joins arrays together, along a specified dimension. Other dimensions must be compatible."
   ([dimension & arrays]
-    (TODO))) 
+    (if (== 0 dimension)
+      (apply join arrays)
+      (TODO)))) 
 
 (defn rotate
   "Rotates an array along specified dimensions"
   ([m dimension shift-amount]
-    (TODO))
+    (let [c (mp/dimension-count m dimension)
+          sh (mod shift-amount c)]
+      (join-along dimension (submatrix m dimension [sh (- c sh)]) (submatrix m dimension [0 sh]))))
   ([m [shifts]]
     (TODO))) 
+
+(defn as-vector
+  "Creates a view of an array as a single flattened vector."
+  ([m]
+    (mp/as-vector m)))
+
+(defn to-vector
+  "Creates a new array representing the elements of array m as a single flattened vector"
+  ([m]
+    (or 
+      (mp/to-vector m)
+      (new-vector m (mp/element-seq m)))))
+
 
 ;; ====================================
 ;; structural change operations
@@ -554,6 +610,39 @@
     (mp/matrix-add a b))
   ([a b & more]
     (reduce mp/matrix-add (mp/matrix-add a b) more)))
+
+(defn add-product
+  "Adds the product of two matrices to the first matrix"
+  ([m a b]
+    (mp/add-product m a b))) 
+
+(defn add-product!
+  "Adds the product of two matrices to the first matrix. Returns the mutated matrix."
+  ([m a b]
+    (mp/add-product! m a b)
+    m)) 
+
+(defn add-scaled
+  "Adds a matrix scaled by a given factor to the first matrix"
+  ([m a factor]
+    (mp/add-scaled m a factor))) 
+
+(defn add-scaled!
+  "Adds a matrix scaled by a given factor to the first matrix. Returns the mutated matrix."
+  ([m a factor]
+    (mp/add-scaled! m a factor)
+    m)) 
+
+(defn add-scaled-product
+  "Adds the product of two matrices scaled by a given factor to the first matrix"
+  ([m a b factor]
+    (mp/add-scaled-product m a b factor))) 
+
+(defn add-scaled-product!
+  "Adds the product of two matrices scaled by a given factor to the first matrix. Returns the mutated matrix."
+  ([m a b factor]
+    (mp/add-scaled-product! m a b factor)
+    m)) 
 
 (defn sub
   "Performs element-wise matrix subtraction on one or more matrices."
@@ -707,8 +796,12 @@
 
 (defn pow
   "Raises every element of a numerical matrix by the given exponent."
+  ([m]
+    m)
   ([m exponent]
-    (mp/element-pow m exponent))) 
+    (mp/element-pow m exponent))
+  ([m exponent & more]
+    (reduce (fn [m x] (mp/element-pow m x)) (mp/element-pow m exponent) more))) 
 
 ;; create all unary maths operators
 (eval
@@ -815,14 +908,14 @@
 
 (defn e=
   "Returns true if all array elements are equal (using Object.equals).
-   WARNING: a java.lang.Long does not equal a lava.lang.Double.
+   WARNING: a java.lang.Long does not equal a java.lang.Double.
    Use 'equals' or 'e==' instead if you want numerical equality."
   ([m1]
     true)
   ([m1 m2]
     (every? true? (map = (eseq m1) (eseq m2))))
   ([m1 m2 & more]
-    (reduce e= (e= m1 m2) more))) 
+    (reduce (fn [r mi] (and r (e= m1 mi))) (e= m1 m2) more))) 
 
 (defn e==
   "Returns true if all array elements are numerically equal (using ==). Throws an error if any elements
@@ -903,12 +996,16 @@
   "Gets the currently active matrix implementation (as a keyword)"
   ([] clojure.core.matrix/*matrix-implementation*))
 
-(defn current-implementation-check
-  "Gets the currently active matrix implementation (as a keyword). Throws an exception if none is available."
+(defn- implementation-check
+  "Gets the currently active matrix implementation (as a matrix object). Throws an exception if none is available."
   ([] 
-    (if-let [im clojure.core.matrix/*matrix-implementation*]
+    (if-let [ik clojure.core.matrix/*matrix-implementation*]
+      (imp/get-canonical-object ik)
+      (error "No current clojure.core.matrix implementation available")))
+  ([impl]
+    (if-let [im (imp/get-canonical-object impl)]
       im
-      (error "No clojure.core.matrix implementation available"))))
+      (error "No clojure.core.matrix implementation available - " (str impl)))))
 
 (defn current-implementation-object
   "Gets the a canonical object for the currently active matrix implementation. This object

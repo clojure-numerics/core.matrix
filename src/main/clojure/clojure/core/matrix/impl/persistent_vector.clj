@@ -28,15 +28,25 @@
 (defn vector-1d? [^clojure.lang.IPersistentVector pv]
   (or (== 0 (.length pv)) (mp/is-scalar? (.nth pv 0))))
 
-(defn mapmatrix
-  "Maps a function over all components of a persistent vector matrix. Like mapv but for matrices"
+(defn- mapmatrix
+  "Maps a function over all components of a persistent vector matrix. Like mapv but for matrices.
+   Assumes correct dimensionality / shape.
+
+   Returns a nested persistent vector matrix or a scalar value."
   ([f m]
-    (if (mp/is-vector? m)
-      (mapv f m)
-      (mapv (partial mapmatrix f) m)))
+    (let [dims (long (mp/dimensionality m))]
+      (cond 
+        (== 0 dims) (f (mp/get-0d m))
+        (== 1 dims) (mapv f (mp/element-seq m))
+        :else (mapv (partial mapmatrix f) m))))
   ([f m1 m2]
     (if (mp/is-vector? m1)
-      (mapv f m1 (mp/element-seq m2))
+      (let [dim2 (long (mp/dimensionality m2))]
+        (when (> dim2 1) (error "mapping with array of higher dimensionality?"))
+        (when (and (== 1 dim2) (not= (mp/dimension-count m1 0) (mp/dimension-count m2 0))) (error "Incompatible vector sizes"))
+        (if (== 0 dim2)
+          (let [v (mp/get-0d m2)] (mapv #(f % v) m1 ))
+          (mapv f m1 (mp/element-seq m2))))
       (mapv (partial mapmatrix f) m1 (mp/get-major-slice-seq  m2))))
   ([f m1 m2 & more]
     (if (mp/is-vector? m1)
@@ -54,17 +64,19 @@
   "Coerces to nested persistent vectors"
   (let [dims (mp/dimensionality x)] 
     (cond
-	    (is-nested-persistent-vectors? x) x ;; already done!
 	    (and (== dims 0) (not (mp/is-scalar? x))) (mp/get-0d x) ;; arrays with zero dimensionality
       (> dims 0) (mp/convert-to-nested-vectors x) 
-	    (clojure.core/vector? x) (mapv mp/convert-to-nested-vectors x) 
+	    (clojure.core/vector? x) 
+        (if (is-nested-persistent-vectors? x) x (mapv mp/convert-to-nested-vectors x)) 
+	    (nil? x) x
+      (.isArray (class x)) (map persistent-vector-coerce (seq x)) 
 	    (instance? java.util.List x) (coerce-nested x)
 	    (instance? java.lang.Iterable x) (coerce-nested x)
 	    (sequential? x) (coerce-nested x)
-	    (.isArray (class x)) (vec (seq x)) 
+      (mp/is-scalar? x) x 
 	    :default (error "Can't coerce to vector: " (class x)))))
 
-(defn vector-dimensionality ^long [m]
+(defn vector-dimensionality [m]
   "Calculates the dimensionality (== nesting depth) of nested persistent vectors"
   (cond
     (clojure.core/vector? m)
@@ -81,6 +93,12 @@
         (and (clojure.core/vector? m) 
              (every? is-nested-vectors? m))))) 
 
+;(defmacro with-broadcasting [syms form]
+;  (let [shape-syms (map (fn [_] (gensym "shape")) syms)]
+;    `(let [~(interleave shape-syms (map (fn [s] `(mp/get-shape ~s)) syms))
+;           bs# (broadcast-shape ~shape-syms)]))) 
+;; TODO comp[lete broadcasting macro
+
 ;; =======================================================================
 ;; Implementation for nested Clojure persistent vectors used as matrices
 
@@ -95,17 +113,7 @@
         (vec (repeat (first dims) (mp/new-matrix-nd m (next dims))))
         0.0))
     (construct-matrix [m data]
-      (cond
-        (mp/is-scalar? data)
-          data
-        (>= (mp/dimensionality data) 1)
-          (mapv #(mp/construct-matrix m %) (mp/get-major-slice-seq data))
-        (satisfies? mp/PImplementation data) ;; must be 0-D array....
-          (mp/get-0d data) 
-        (sequential? data)
-          (mapv #(mp/construct-matrix m %) data)
-        :default
-          (error "Don't know how to construct matrix from: " (class data))))
+      (persistent-vector-coerce data))
     (supports-dimensionality? [m dims]
       true))
 
@@ -167,6 +175,19 @@
     (get-major-slice-seq [m] 
       (seq m)))
 
+(extend-protocol mp/PSliceJoin
+  clojure.lang.IPersistentVector
+    (join [m a]
+      (let [dims (mp/dimensionality m)
+            adims (mp/dimensionality a)]
+        (cond 
+          (== dims adims)
+            (vec (concat (mp/get-major-slice-seq m) (mp/get-major-slice-seq a)))
+          (== dims (inc adims))
+            (conj m a)
+          :else 
+            (error "Joining with array of incompatible size"))))) 
+
 (extend-protocol mp/PSubVector
   clojure.lang.IPersistentVector
     (subvector [m start length]
@@ -175,14 +196,18 @@
 (extend-protocol mp/PMatrixAdd
   clojure.lang.IPersistentVector
     (matrix-add [m a]
-      (mapmatrix + m (persistent-vector-coerce a)))
+      (let [[m a] (mp/broadcast-compatible m a)]
+        (mapmatrix + m (persistent-vector-coerce a))))
     (matrix-sub [m a]
-      (mapmatrix - m (persistent-vector-coerce a))))
+      (let [[m a] (mp/broadcast-compatible m a)]
+        (mapmatrix - m (persistent-vector-coerce a)))))
 
 (extend-protocol mp/PVectorOps
   clojure.lang.IPersistentVector
     (vector-dot [a b]
-      (reduce + 0 (map * a (persistent-vector-coerce b))))
+      (let [b (persistent-vector-coerce b)]
+        (when-not (== (count a) (count b)) (error "Mismatched vector sizes"))
+        (reduce + 0 (map * a b))))
     (length [a]
       (Math/sqrt (double (reduce + (map #(* % %) a)))))
     (length-squared [a]
@@ -219,7 +244,8 @@
     (element-multiply [m a]
       (if (number? a) 
         (mp/scale m a)
-        (mp/element-map m * a)))
+        (let [[m a] (mp/broadcast-compatible m a)] 
+          (mp/element-map m * a))))
     (matrix-multiply [m a]
       (let [mdims (long (mp/dimensionality m))
             adims (long (mp/dimensionality a))]
@@ -248,9 +274,11 @@
 (extend-protocol mp/PMatrixScaling
   clojure.lang.IPersistentVector
     (scale [m a]
-      (mapmatrix #(* % a) m))
+      (let [a (mp/get-0d a)]
+        (mapmatrix #(* % a) m)))
     (pre-scale [m a]
-      (mapmatrix (partial * a) m)))
+      (let [a (mp/get-0d a)]
+        (mapmatrix (partial * a) m))))
 
 ;; helper functin to build generic maths operations
 (defn build-maths-function
@@ -276,7 +304,9 @@
 (extend-protocol mp/PDimensionInfo
   clojure.lang.IPersistentVector
     (dimensionality [m]
-      (vector-dimensionality m))
+      (if (== 0 (.length m))
+        1
+        (inc (mp/dimensionality (.nth m 0)))))
     (is-vector? [m]
       (vector-1d? m))
     (is-scalar? [m]
@@ -329,4 +359,4 @@
 ;; =====================================
 ;; Register implementation
 
-(imp/register-implementation [])
+(imp/register-implementation [1])
