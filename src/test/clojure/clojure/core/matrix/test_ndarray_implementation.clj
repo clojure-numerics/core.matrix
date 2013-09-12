@@ -2,7 +2,9 @@
   (:use clojure.test)
   (:use clojure.core.matrix)
   (:require [clojure.core.matrix.operators :as op])
-  (:require [clojure.core.matrix.compliance-tester])
+  (:require [clojure.core.matrix.compliance-tester :as ct])
+  (:require [clojure.core.matrix.protocols :as mp])
+  (:require [clojure.core.matrix.generic :as gen])
   (:require clojure.core.matrix.impl.persistent-vector)
   (:use clojure.core.matrix.impl.ndarray))
 
@@ -62,11 +64,32 @@
              (map #(coerce [] %)
                   (slices (empty-ndarray [2 2]))))))))
 
+(deftest test-contained-vectors
+  (let [a (array :ndarray :foo)]
+    (mset! a [1 2 3])
+    (is (== 1 (ecount a)))
+    (is (= [1 2 3] (mget a)))
+    (is (= [] (shape a)))
+    (is (equals 3 (emap count a)))))
+
+(deftest test-seq
+  (is (= (-> (array :ndarray [[1 2] [3 4]])
+             seq
+             second
+             mp/persistent-vector-coerce)
+         [3 4])))
+
 (deftest test-assign
   (let [m (empty-ndarray [2 2 2])
         vm [[[0 1] [2 3]] [[4 5] [6 7]]]]
     (assign! m vm)
     (is (= (eseq m) (range 8)))))
+
+(deftest test-object-emap
+  (let [m (new-array :ndarray [2 2])
+        vecs (for [i (range 4)] [i (inc i)])]
+    (assign-array! m (object-array vecs))
+    (is (equals [[2 2] [2 2]] (emap count m)))))
 
 #_(deftest test-helper-functions
   (is (== 35 (calc-index [1 5] (long-array [100 30]))))
@@ -77,9 +100,23 @@
     (is (= [5 6 7] (seq (shape m))))
     (is (= [7 6 5] (seq (shape (transpose m)))))))
 
+(defn get-primitive-ndarrays []
+  [(empty-ndarray-double [3 3])
+   (empty-ndarray-long [3 3])
+   (empty-ndarray-float [3 3])])
+
+(deftest default-values
+  (is (nil? (gen/default-value :ndarray)))
+  (is (= 0.0 (gen/default-value :ndarray-double)))
+  (is (= 0 (gen/default-value :ndarray-long))))
+
 (deftest ndarray-test
-   (clojure.core.matrix.compliance-tester/test-ndarray-implementation (empty-ndarray [3 3])))
+  (ct/test-ndarray-implementation (empty-ndarray [3 3])))
 
 ;; run complicance tests
 (deftest compliance-test
-   (clojure.core.matrix.compliance-tester/compliance-test (empty-ndarray [3 3])))
+  (ct/compliance-test (empty-ndarray [3 3])))
+
+(deftest compliance-test-primitives
+  (doseq [m (get-primitive-ndarrays)]
+    (ct/compliance-test m)))
