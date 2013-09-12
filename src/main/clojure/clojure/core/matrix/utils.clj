@@ -29,18 +29,33 @@
 
 ;; useful TODO macro facilitates searching for TODO while throwing an error at runtime :-)
 (defmacro TODO
-  ([]
-    `(error "TODO: not yet implemented")))
+  ([] `(error "TODO: not yet implemented")))
 
-(defn same-shape-object? [sa sb]
-  (cond
-    (= sa sb) true
-    (not= (count sa) (count sb)) false
-    (let [sa (seq sa)
-          sb (seq sb)]
-      (every? true? (map == sa sb))) true
+(defmacro iae-when-not
+  "Throws an IllegalArgumentException when the predicate is not satisfied"
+  [pred? exception-str]
+  `(when-not ~pred?
+     (throw (IllegalArgumentException.
+             ~exception-str))))
 
-    :else false))
+(defn valid-shape?
+  "returns true if the given object is a valid core.matrix array shape."
+  ([shape]
+    (try
+      (and (>= (count shape) 0)
+           (every? integer? shape))
+      (catch Throwable t false))))
+
+(defn same-shape-object?
+  "Returns true if two shapes are the same."
+  ([sa sb]
+    (cond
+      (= sa sb) true
+      (not= (count sa) (count sb)) false
+      (let [sa (seq sa)
+            sb (seq sb)]
+        (every? true? (map == sa sb))) true
+      :else false)))
 
 (defn xor
   "Returns the logical xor of a set of values, considered as booleans"
@@ -164,4 +179,32 @@
           r (broadcast-shape* a b)]
       (if r (reverse r) nil))))
 
+(defmacro c-for
+  "C-like loop with nested loops support"
+  [loops & body]
+  (letfn [(c-for-rec [loops body-stmts]
+            (if (seq loops)
+              (let [[var init check next] (take 4 loops)]
+                `((loop [~var ~init]
+                     (when ~check
+                       ~@(c-for-rec (nthrest loops 4) body-stmts)
+                       (recur ~next)))))
+              body-stmts))]
+    `(do ~@(c-for-rec loops body) nil)))
 
+(defmacro abutnth [i xs]
+  `(let [n# (alength ~xs)
+         new-xs# (java.util.Arrays/copyOf ~xs (int (dec n#)))]
+     (c-for [j# (int ~i) (< j# (dec n#)) (inc j#)]
+       (aset new-xs# (int j#) (aget ~xs (int (inc j#)))))
+     new-xs#))
+
+(defmacro areverse [xs]
+  `(let [n# (alength ~xs)
+         new-xs# (java.util.Arrays/copyOf ~xs (int n#))]
+     (c-for [i# (int 0) (< i# (quot n# 2)) (inc i#)]
+       (let [j# (- (- n# 1) i#)
+             t# (aget new-xs# j#)]
+         (aset new-xs# j# (aget new-xs# i#))
+         (aset new-xs# i# t#)))
+     new-xs#))

@@ -109,6 +109,7 @@
   (let [a (double-array [1 2])
         b (double-array [2 3])]
     (is (identical? a (emul! a b)))
+    (is (equals [2.0 6.0] (vec a)))
     (is (equals [2.0 6.0] a))))
 
 (deftest test-maths-ops
@@ -119,7 +120,8 @@
 (deftest instance-tests
   (clojure.core.matrix.compliance-tester/instance-test (double-array []))
   (clojure.core.matrix.compliance-tester/instance-test (double-array [1]))
-  (clojure.core.matrix.compliance-tester/instance-test (double-array [1 2])))
+  (clojure.core.matrix.compliance-tester/instance-test (double-array [1 2]))
+  (clojure.core.matrix.compliance-tester/instance-test (double-array [-1 4 2 7 -3])))
 
 (deftest compliance-test
   (clojure.core.matrix.compliance-tester/compliance-test (double-array [0.23])))
